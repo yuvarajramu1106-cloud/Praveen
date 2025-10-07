@@ -16,18 +16,18 @@ if uploaded_file:
     st.write("### 📂 Preview of your data")
     st.dataframe(df.head())
 
-    # Ask user to map columns
+    # Map columns based on your CSV structure
     st.write("### 🔑 Map Your Columns")
-    name_col = st.selectbox("Select column for Student Name", df.columns)
-    event_col = st.selectbox("Select column for Event", df.columns)
-    date_col = st.selectbox("Select column for Date", df.columns)
-    status_col = st.selectbox("Select column for Status (Present/Absent)", df.columns)
-    score_col = st.selectbox("Select column for Score/Points", df.columns)
+    name_col = st.selectbox("Select column for Participant Name", df.columns, index=df.columns.get_loc('Username'))
+    event_col = st.selectbox("Select column for Event Name", df.columns, index=df.columns.get_loc('Event name'))
+    date_col = st.selectbox("Select column for Date of Event", df.columns, index=df.columns.get_loc('Date of event'))
+    status_col = st.selectbox("Select column for Participation Level (High/Low/Absent)", df.columns, index=df.columns.get_loc('Level of participation'))
+    score_col = st.selectbox("Select column for Hours/Days Invested", df.columns, index=df.columns.get_loc('Hours /days invested in preparation'))
 
     if st.button("Run Analysis + Train Model"):
         try:
-            # Convert Status to numeric (1=Present, 0=Absent)
-            df['Status_Num'] = df[status_col].apply(lambda x: 1 if str(x).lower().startswith('p') else 0)
+            # Convert Level of Participation to numeric (1=High, 0=Low/Absent)
+            df['Status_Num'] = df[status_col].apply(lambda x: 1 if str(x).lower() in ['high', 'present'] else 0)
 
             # Convert date column
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
@@ -59,7 +59,7 @@ if uploaded_file:
 
             # Predict participation probabilities for all rows
             df['Predicted_Prob'] = model.predict_proba(X)[:, 1]
-            df['Predicted_Status'] = df['Predicted_Prob'].apply(lambda p: "Likely Present" if p > 0.5 else "Likely Absent")
+            df['Predicted_Status'] = df['Predicted_Prob'].apply(lambda p: "Likely High Participation" if p > 0.5 else "Likely Low/Absent")
 
             st.write("### 🔮 Predictions")
             st.dataframe(df[[name_col, event_col, score_col, date_col, 'Predicted_Prob', 'Predicted_Status']])
