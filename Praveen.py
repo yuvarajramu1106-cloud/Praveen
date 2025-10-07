@@ -1,91 +1,229 @@
+# participation_dashboard.py
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.svm import SVC, SVR
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.metrics import accuracy_score, classification_report, mean_squared_error, r2_score
 
-# ML imports inside try-except so app doesn't crash if missing
-try:
-    from sklearn.preprocessing import LabelEncoder
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import accuracy_score, classification_report
-except ModuleNotFoundError as e:
-    st.error(f"Required package missing: {e}. Make sure requirements.txt includes scikit-learn.")
+# -----------------------
+# Page setup
+# -----------------------
+st.set_page_config(page_title="Student Participation Dashboard", layout="wide")
+st.markdown("<h1 style='text-align: center; color: gold;'>🎓 Student Participation Dashboard 🎓</h1>", unsafe_allow_html=True)
 
-st.set_page_config(page_title="AI Participation Predictor", layout="wide")
-st.title("🤖 AI Participation Tracker & Predictor")
+# -----------------------
+# Helper function
+# -----------------------
+def sanitize_df(df):
+    df = df.rename(columns={c: c.strip() for c in df.columns})
+    expected = ["Department", "Year", "Event", "Role", "Individual_or_Team", "Previous_Participation_Count", "Skill domain interested in"]
+    for col in expected:
+        if col not in df.columns:
+            df[col] = np.nan
+    df["Year"] = df["Year"].astype(str)
+    df["Department"] = df["Department"].fillna("Unknown").astype(str)
+    df["Event"] = df["Event"].fillna("Unknown").astype(str)
+    df["Role"] = df["Role"].fillna("Participant").astype(str)
+    df["Individual_or_Team"] = df["Individual_or_Team"].fillna("Team").astype(str)
+    df["Skill domain interested in"] = df["Skill domain interested in"].fillna("Coding / Technical").astype(str)
+    return df
 
-uploaded_file = st.file_uploader("Upload Participation CSV", type=["csv"])
+# -----------------------
+# Upload CSV / sample
+# -----------------------
+uploaded_file = st.sidebar.file_uploader("📂 Upload your CSV/Excel", type=["csv", "xlsx"])
+use_sample = st.sidebar.checkbox("Use sample data", value=False)
 
-def infer_column(possibles, columns):
-    for poss in possibles:
-        for col in columns:
-            if poss.lower() in col.lower():
-                return col
-    return None
+if uploaded_file is not None:
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+    df = sanitize_df(df)
+elif use_sample:
+    np.random.seed(42)
+    n = 200
+    names = [f"Student {i}" for i in range(1, 51)]
+    depts = ["CSE", "ECE", "MECH", "CIVIL", "EEE", "AIDS", "AIML"]
+    events = ["Symposium", "Paper presentation", "Seminar", "Quiz", "Workshop", "Sports", "Cultural event"]
+    roles = ["Presenter/Speaker", "Organizer/Volunteer", "Coordinator/Leader", "Winner/Acheiver"]
+    years = ["1st Year", "2nd Year", "3rd Year", "4th Year"]
+    skills = ["Coding / Technical", "Creativity and arts", "Soft skills", "Management", "Sports and fitness", "Research and innovation"]
+    data = {
+        "Timestamp": pd.date_range("2023-01-01", periods=n, freq="7D"),
+        "Full Name": np.random.choice(names, size=n),
+        "Roll Number": np.random.randint(1000, 2000, size=n).astype(str),
+        "Department": np.random.choice(depts, size=n),
+        "Year": np.random.choice(years, size=n),
+        "Event": np.random.choice(events, size=n),
+        "Role": np.random.choice(roles, size=n),
+        "Individual_or_Team": np.random.choice(["Individual", "Team"], size=n),
+        "Previous_Participation_Count": np.random.poisson(2, size=n),
+        "Skill domain interested in": np.random.choice(skills, size=n)
+    }
+    df = pd.DataFrame(data)
+    df = sanitize_df(df)
+else:
+    st.warning("📥 Please upload a CSV or tick 'Use sample data'.")
+    st.stop()
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.write("### Data Preview")
-    st.dataframe(df.head())
+st.subheader("📊 Dataset Preview")
+st.write(df.head())
 
-    columns = df.columns.tolist()
+# -----------------------
+# Task type
+# -----------------------
+task_type = st.sidebar.selectbox("🧩 Select Task Type", ["Classification", "Regression"])
 
-    # Auto-inference or user selection for each necessary column
-    name_col = infer_column(['Name', 'Participant'], columns) or st.selectbox("Participant Name column", columns)
-    event_col = infer_column(['Event', 'Competition'], columns) or st.selectbox("Event Name column", columns)
-    date_col = infer_column(['Date'], columns) or st.selectbox("Date of Event column", columns)
-    status_col = infer_column(['Level of participation', 'Participation Level', 'Status'], columns) or st.selectbox("Participation Level column", columns)
-    score_col = infer_column(['Hours', 'Invested'], columns) or st.selectbox("Hours Invested column", columns)
+# -----------------------
+# Target and feature selection
+# -----------------------
+target_col = st.sidebar.selectbox("🎯 Select Target Column", df.columns)
+feature_cols = st.sidebar.multiselect(
+    "✨ Select Feature Columns (choose at least 3)", 
+    [c for c in df.columns if c != target_col],
+    default=[c for c in df.columns if c != target_col][:5]
+)
+if len(feature_cols) < 3:
+    st.warning("⚠ Please select at least 3 features.")
+    st.stop()
 
-    # Confirm detected columns with the user
-    st.write(f"**Detected:** Name={name_col}, Event={event_col}, Date={date_col}, Level={status_col}, Hours={score_col}")
+X = df[feature_cols].copy()
+y_orig = df[target_col].copy()
 
-    if st.button("Run Analysis + Train Model"):
-        try:
-            # Clean/encode participation: label as 1 if 'high', 'present', or 'Winner / Achiever'
-            def encode_status(val):
-                v = str(val).lower()
-                if 'high' in v or 'present' in v or 'winner' in v or 'achiever' in v or 'award' in v:
-                    return 1
-                else:
-                    return 0
-            df['Status_Num'] = df[status_col].apply(encode_status)
+# -----------------------
+# Classification encoding
+# -----------------------
+if task_type == "Classification":
+    le_target = LabelEncoder()
+    y = le_target.fit_transform(y_orig.astype(str))
+else:
+    y = y_orig.copy()
 
-            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            df['Month'] = df[date_col].dt.month.fillna(0).astype(int)
-            df['DayOfWeek'] = df[date_col].dt.dayofweek.fillna(0).astype(int)
+# -----------------------
+# Preprocessing
+# -----------------------
+numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
+categorical_features = X.select_dtypes(include=['object']).columns.tolist()
 
-            le_event = LabelEncoder()
-            df['Event_Enc'] = le_event.fit_transform(df[event_col].astype(str))
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', StandardScaler(), numeric_features),
+        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+    ]
+)
 
-            # Clean score col, fallback to 0 for missing or malformed
-            df[score_col] = pd.to_numeric(df[score_col], errors='coerce').fillna(0)
+# -----------------------
+# Model selection
+# -----------------------
+if task_type == "Classification":
+    model_choice = st.sidebar.selectbox("🤖 Choose Classifier", ["SVM", "Logistic Regression", "Random Forest", "Decision Tree"])
+else:
+    model_choice = st.sidebar.selectbox("🤖 Choose Regressor", ["Linear Regression", "SVR", "Random Forest Regressor", "Decision Tree Regressor"])
 
-            X = df[['Event_Enc', 'Month', 'DayOfWeek', score_col]]
-            y = df['Status_Num']
+# -----------------------
+# Define model pipeline
+# -----------------------
+def get_model_pipeline(task, choice):
+    if task == "Classification":
+        if choice == "SVM":
+            return Pipeline([('preprocessor', preprocessor), ('classifier', SVC())])
+        elif choice == "Logistic Regression":
+            return Pipeline([('preprocessor', preprocessor), ('classifier', LogisticRegression(max_iter=1000))])
+        elif choice == "Random Forest":
+            return Pipeline([('preprocessor', preprocessor), ('classifier', RandomForestClassifier(n_estimators=200, random_state=42, class_weight='balanced'))])
+        else:
+            return Pipeline([('preprocessor', preprocessor), ('classifier', DecisionTreeClassifier(random_state=42, class_weight='balanced'))])
+    else:
+        if choice == "Linear Regression":
+            return Pipeline([('preprocessor', preprocessor), ('regressor', LinearRegression())])
+        elif choice == "SVR":
+            return Pipeline([('preprocessor', preprocessor), ('regressor', SVR())])
+        elif choice == "Random Forest Regressor":
+            return Pipeline([('preprocessor', preprocessor), ('regressor', RandomForestRegressor(n_estimators=200, random_state=42))])
+        else:
+            return Pipeline([('preprocessor', preprocessor), ('regressor', DecisionTreeRegressor(random_state=42))])
 
-            from sklearn.model_selection import train_test_split
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+# -----------------------
+# Predefined dropdown lists for prediction input
+# -----------------------
+depts = ["CSE", "ECE", "MECH", "CIVIL", "EEE", "AIDS", "AIML"]
+events = ["Symposium", "Paper presentation", "Seminar", "Quiz", "Workshop", "Sports", "Cultural event"]
+roles = ["Presenter/Speaker", "Organizer/Volunteer", "Coordinator/Leader", "Winner/Acheiver"]
+years = ["1st Year", "2nd Year", "3rd Year", "4th Year"]
+skills = ["Coding / Technical", "Creativity and arts", "Soft skills", "Management", "Sports and fitness", "Research and innovation"]
 
-            model = LogisticRegression(max_iter=1000)
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            acc = accuracy_score(y_test, y_pred)
-            st.success(f"Model Accuracy: {acc*100:.2f}%")
-            st.text(classification_report(y_test, y_pred))
+# -----------------------
+# User input for prediction
+# -----------------------
+st.markdown("---")
+st.subheader("📝 Enter Feature Values for Prediction")
+input_data = {}
+for col in feature_cols:
+    if col in numeric_features:
+        val = st.number_input(f"{col}", value=float(df[col].mean()))
+    else:
+        if col.lower() == "department":
+            val = st.selectbox(f"{col}", depts)
+        elif col.lower() == "event":
+            val = st.selectbox(f"{col}", events)
+        elif col.lower() == "role":
+            val = st.selectbox(f"{col}", roles)
+        elif col.lower() == "year":
+            val = st.selectbox(f"{col}", years)
+        elif col.lower() == "skill domain interested in":
+            val = st.selectbox(f"{col}", skills)
+        else:
+            val = st.selectbox(f"{col}", sorted(df[col].dropna().unique()))
+    input_data[col] = val
+input_df = pd.DataFrame([input_data])
 
-            df['Predicted_Prob'] = model.predict_proba(X)[:, 1]
-            df['Predicted_Status'] = df['Predicted_Prob'].apply(lambda p: "Likely High" if p > 0.5 else "Likely Low")
+# -----------------------
+# Predict button
+# -----------------------
+if st.button("🔮 Predict"):
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = get_model_pipeline(task_type, model_choice)
+    model.fit(X_train, y_train)
+    
+    # Predict test set
+    y_pred = model.predict(X_test)
 
-            st.write("### Predictions")
-            st.dataframe(df[[name_col, event_col, score_col, date_col, 'Predicted_Prob', 'Predicted_Status']])
+    # -----------------------
+    # Display metrics
+    # -----------------------
+    st.subheader("✨ Model Performance")
+    if task_type == "Classification":
+        acc = accuracy_score(y_test, y_pred)
+        st.write(f"🎯 Accuracy: {acc:.2f}")
+        st.text("📑 Classification Report:")
+        test_classes = np.unique(y_test)
+        test_class_names = le_target.inverse_transform(test_classes)
+        st.text(classification_report(y_test, y_pred, zero_division=0, labels=test_classes, target_names=test_class_names))
+    else:
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        st.write(f"📏 MSE: {mse:.3f}")
+        st.write(f"📈 R² Score: {r2:.3f}")
 
-            avg_prob = df.groupby(name_col)['Predicted_Prob'].mean().sort_values(ascending=False)
-            fig, ax = plt.subplots(figsize=(10,6))
-            sns.barplot(x=avg_prob.values, y=avg_prob.index, palette="viridis", ax=ax)
-            ax.set_xlabel("Avg Predicted Probability")
-            ax.set_ylabel("Participant Name")
-            st.pyplot(fig)
+    # -----------------------
+    # Predict user input
+    # -----------------------
+    prediction = model.predict(input_df)
+    if task_type == "Classification":
+        pred_label = le_target.inverse_transform(prediction)[0]
+        st.subheader(f"✅ Predicted {target_col}: {pred_label}")
+    else:
+        st.subheader(f"✅ Predicted {target_col}: {prediction[0]:.2f}")
+        st.info("ℹ Regression predictions are numeric values.")
 
-        except Exception as e:
-            st.error(f"Error during analysis: {e}")
+    # Balloons only after prediction
+    st.balloons()
