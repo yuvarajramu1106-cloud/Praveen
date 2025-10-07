@@ -1,72 +1,91 @@
 import streamlit as st
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# ML imports inside try-except so app doesn't crash if missing
+try:
+    from sklearn.preprocessing import LabelEncoder
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, classification_report
+except ModuleNotFoundError as e:
+    st.error(f"Required package missing: {e}. Make sure requirements.txt includes scikit-learn.")
 
 st.set_page_config(page_title="AI Participation Predictor", layout="wide")
 st.title("🤖 AI Participation Tracker & Predictor")
 
-# Upload CSV
 uploaded_file = st.file_uploader("Upload Participation CSV", type=["csv"])
+
+def infer_column(possibles, columns):
+    for poss in possibles:
+        for col in columns:
+            if poss.lower() in col.lower():
+                return col
+    return None
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    st.write("### 📂 Preview of your data")
+    st.write("### Data Preview")
     st.dataframe(df.head())
 
-    # Map columns based on your CSV structure
-    st.write("### 🔑 Map Your Columns")
-    name_col = st.selectbox("Select column for Participant Name", df.columns, index=df.columns.get_loc('Username'))
-    event_col = st.selectbox("Select column for Event Name", df.columns, index=df.columns.get_loc('Event name'))
-    date_col = st.selectbox("Select column for Date of Event", df.columns, index=df.columns.get_loc('Date of event'))
-    status_col = st.selectbox("Select column for Participation Level (High/Low/Absent)", df.columns, index=df.columns.get_loc('Level of participation'))
-    score_col = st.selectbox("Select column for Hours/Days Invested", df.columns, index=df.columns.get_loc('Hours /days invested in preparation'))
+    columns = df.columns.tolist()
+
+    # Auto-inference or user selection for each necessary column
+    name_col = infer_column(['Name', 'Participant'], columns) or st.selectbox("Participant Name column", columns)
+    event_col = infer_column(['Event', 'Competition'], columns) or st.selectbox("Event Name column", columns)
+    date_col = infer_column(['Date'], columns) or st.selectbox("Date of Event column", columns)
+    status_col = infer_column(['Level of participation', 'Participation Level', 'Status'], columns) or st.selectbox("Participation Level column", columns)
+    score_col = infer_column(['Hours', 'Invested'], columns) or st.selectbox("Hours Invested column", columns)
+
+    # Confirm detected columns with the user
+    st.write(f"**Detected:** Name={name_col}, Event={event_col}, Date={date_col}, Level={status_col}, Hours={score_col}")
 
     if st.button("Run Analysis + Train Model"):
         try:
-            # Convert Level of Participation to numeric (1=High, 0=Low/Absent)
-            df['Status_Num'] = df[status_col].apply(lambda x: 1 if str(x).lower() in ['high', 'present'] else 0)
+            # Clean/encode participation: label as 1 if 'high', 'present', or 'Winner / Achiever'
+            def encode_status(val):
+                v = str(val).lower()
+                if 'high' in v or 'present' in v or 'winner' in v or 'achiever' in v or 'award' in v:
+                    return 1
+                else:
+                    return 0
+            df['Status_Num'] = df[status_col].apply(encode_status)
 
-            # Convert date column
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            df['Month'] = df[date_col].dt.month
-            df['DayOfWeek'] = df[date_col].dt.dayofweek
+            df['Month'] = df[date_col].dt.month.fillna(0).astype(int)
+            df['DayOfWeek'] = df[date_col].dt.dayofweek.fillna(0).astype(int)
 
-            # Encode categorical columns
             le_event = LabelEncoder()
             df['Event_Enc'] = le_event.fit_transform(df[event_col].astype(str))
 
-            # Features and labels
+            # Clean score col, fallback to 0 for missing or malformed
+            df[score_col] = pd.to_numeric(df[score_col], errors='coerce').fillna(0)
+
             X = df[['Event_Enc', 'Month', 'DayOfWeek', score_col]]
             y = df['Status_Num']
 
-            # Train/test split
+            from sklearn.model_selection import train_test_split
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
 
-            # Train model
-            model = LogisticRegression()
+            model = LogisticRegression(max_iter=1000)
             model.fit(X_train, y_train)
-
-            # Predictions
             y_pred = model.predict(X_test)
             acc = accuracy_score(y_test, y_pred)
-
-            st.success(f"✅ Model Trained Successfully — Accuracy: {acc*100:.2f}%")
-            st.write("### Classification Report")
+            st.success(f"Model Accuracy: {acc*100:.2f}%")
             st.text(classification_report(y_test, y_pred))
 
-            # Predict participation probabilities for all rows
             df['Predicted_Prob'] = model.predict_proba(X)[:, 1]
-            df['Predicted_Status'] = df['Predicted_Prob'].apply(lambda p: "Likely High Participation" if p > 0.5 else "Likely Low/Absent")
+            df['Predicted_Status'] = df['Predicted_Prob'].apply(lambda p: "Likely High" if p > 0.5 else "Likely Low")
 
-            st.write("### 🔮 Predictions")
+            st.write("### Predictions")
             st.dataframe(df[[name_col, event_col, score_col, date_col, 'Predicted_Prob', 'Predicted_Status']])
 
-            # --- Visualization ---
-            st.write("## 📊 Insights")
-            st.bar_chart(df.groupby(name_col)['Predicted_Prob'].mean())
+            avg_prob = df.groupby(name_col)['Predicted_Prob'].mean().sort_values(ascending=False)
+            fig, ax = plt.subplots(figsize=(10,6))
+            sns.barplot(x=avg_prob.values, y=avg_prob.index, palette="viridis", ax=ax)
+            ax.set_xlabel("Avg Predicted Probability")
+            ax.set_ylabel("Participant Name")
+            st.pyplot(fig)
 
         except Exception as e:
-            st.error(f"⚠️ Error processing file: {e}")
+            st.error(f"Error during analysis: {e}")
