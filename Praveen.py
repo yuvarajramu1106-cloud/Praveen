@@ -1,8 +1,12 @@
 import streamlit as st
 import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report
 
-st.set_page_config(page_title="Participation Tracker", layout="wide")
-st.title("📊 Participation Tracker")
+st.set_page_config(page_title="AI Participation Predictor", layout="wide")
+st.title("🤖 AI Participation Tracker & Predictor")
 
 # Upload CSV
 uploaded_file = st.file_uploader("Upload Participation CSV", type=["csv"])
@@ -15,37 +19,54 @@ if uploaded_file:
     # Ask user to map columns
     st.write("### 🔑 Map Your Columns")
     name_col = st.selectbox("Select column for Student Name", df.columns)
-    roll_col = st.selectbox("Select column for Roll No", df.columns)
     event_col = st.selectbox("Select column for Event", df.columns)
     date_col = st.selectbox("Select column for Date", df.columns)
     status_col = st.selectbox("Select column for Status (Present/Absent)", df.columns)
     score_col = st.selectbox("Select column for Score/Points", df.columns)
 
-    if st.button("Analyse Participation"):
+    if st.button("Run Analysis + Train Model"):
         try:
-            # Total Participation per Student
-            participation_summary = df.groupby(name_col)[status_col].apply(lambda x: (x == "Present").sum())
+            # Convert Status to numeric (1=Present, 0=Absent)
+            df['Status_Num'] = df[status_col].apply(lambda x: 1 if str(x).lower().startswith('p') else 0)
 
-            # Average Score per Student
-            avg_scores = df.groupby(name_col)[score_col].mean()
+            # Convert date column
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            df['Month'] = df[date_col].dt.month
+            df['DayOfWeek'] = df[date_col].dt.dayofweek
 
-            st.success("✅ Analysis Complete")
-            st.write("### Participation Summary")
-            st.dataframe(participation_summary)
-            st.write("### Average Scores")
-            st.dataframe(avg_scores)
+            # Encode categorical columns
+            le_event = LabelEncoder()
+            df['Event_Enc'] = le_event.fit_transform(df[event_col].astype(str))
 
-            # --- Charts ---
+            # Features and labels
+            X = df[['Event_Enc', 'Month', 'DayOfWeek', score_col]]
+            y = df['Status_Num']
+
+            # Train/test split
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+
+            # Train model
+            model = LogisticRegression()
+            model.fit(X_train, y_train)
+
+            # Predictions
+            y_pred = model.predict(X_test)
+            acc = accuracy_score(y_test, y_pred)
+
+            st.success(f"✅ Model Trained Successfully — Accuracy: {acc*100:.2f}%")
+            st.write("### Classification Report")
+            st.text(classification_report(y_test, y_pred))
+
+            # Predict participation probabilities for all rows
+            df['Predicted_Prob'] = model.predict_proba(X)[:, 1]
+            df['Predicted_Status'] = df['Predicted_Prob'].apply(lambda p: "Likely Present" if p > 0.5 else "Likely Absent")
+
+            st.write("### 🔮 Predictions")
+            st.dataframe(df[[name_col, event_col, score_col, date_col, 'Predicted_Prob', 'Predicted_Status']])
+
+            # --- Visualization ---
             st.write("## 📊 Insights")
-
-            st.subheader("Participation Count per Student")
-            st.bar_chart(participation_summary)
-
-            st.subheader("Average Score per Student")
-            st.bar_chart(avg_scores)
-
-            st.subheader("Event-wise Participation")
-            st.bar_chart(df.groupby(event_col)[status_col].apply(lambda x: (x == "Present").sum()))
+            st.bar_chart(df.groupby(name_col)['Predicted_Prob'].mean())
 
         except Exception as e:
             st.error(f"⚠️ Error processing file: {e}")
