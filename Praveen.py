@@ -1,4 +1,4 @@
-# participation_dashboard.py
+# skillgap_analyzer.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,224 +6,201 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.svm import SVC, SVR
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.metrics import accuracy_score, classification_report, mean_squared_error, r2_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
 
-# -----------------------
-# Page setup
-# -----------------------
-st.set_page_config(page_title="Student Participation Dashboard", layout="wide")
-st.markdown("<h1 style='text-align: center; color: gold;'>🎓 Student Participation Dashboard 🎓</h1>", unsafe_allow_html=True)
+# ---------------------------------
+# 🎨 Page Configuration
+# ---------------------------------
+st.set_page_config(page_title="Skill Gap Analyzer", layout="wide")
+st.markdown("<h1 style='text-align:center; color:#00C9A7;'>💼 Skill Gap Analyzer</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Identify and bridge your missing skills for your desired career goals</p>", unsafe_allow_html=True)
+st.markdown("---")
 
-# -----------------------
-# Helper function
-# -----------------------
-def sanitize_df(df):
-    df = df.rename(columns={c: c.strip() for c in df.columns})
-    expected = ["Department", "Year", "Event", "Role", "Individual_or_Team", "Previous_Participation_Count", "Skill domain interested in"]
-    for col in expected:
-        if col not in df.columns:
-            df[col] = np.nan
-    df["Year"] = df["Year"].astype(str)
-    df["Department"] = df["Department"].fillna("Unknown").astype(str)
-    df["Event"] = df["Event"].fillna("Unknown").astype(str)
-    df["Role"] = df["Role"].fillna("Participant").astype(str)
-    df["Individual_or_Team"] = df["Individual_or_Team"].fillna("Team").astype(str)
-    df["Skill domain interested in"] = df["Skill domain interested in"].fillna("Coding / Technical").astype(str)
-    return df
+# ---------------------------------
+# 📂 Dataset Section
+# ---------------------------------
+col1, col2 = st.columns([2, 1])
 
-# -----------------------
-# Upload CSV / sample
-# -----------------------
-uploaded_file = st.sidebar.file_uploader("📂 Upload your CSV/Excel", type=["csv", "xlsx"])
-use_sample = st.sidebar.checkbox("Use sample data", value=False)
+with col2:
+    st.header("📥 Data Input")
+    uploaded_file = st.file_uploader("Upload your student skill dataset", type=["csv", "xlsx"])
+    use_sample = st.checkbox("Use sample dataset", value=False)
 
-if uploaded_file is not None:
+def create_sample_data():
+    data = {
+        "Year_of_Study": ["2nd", "3rd", "4th", "2nd", "3rd"],
+        "Degree_Branch": ["CSE", "ECE", "AIML", "EEE", "CIVIL"],
+        "Python_Skill(1-5)": [4, 3, 5, 2, 1],
+        "Java_Skill(1-5)": [3, 4, 2, 3, 2],
+        "C_C++_Skill(1-5)": [4, 2, 5, 1, 2],
+        "SQL_Skill(1-5)": [3, 3, 4, 2, 1],
+        "WebDev_Skill(1-5)": [4, 2, 5, 3, 2],
+        "Communication_Skill(1-5)": [4, 5, 3, 4, 2],
+        "ProblemSolving_Skill(1-5)": [5, 4, 4, 3, 2],
+        "Leadership_Skill(1-5)": [3, 4, 3, 2, 1],
+        "Teamwork_Skill(1-5)": [5, 4, 3, 4, 3],
+        "Completed_Courses": [3, 5, 6, 2, 1],
+        "Career_Goal": ["Software Engineer", "Data Scientist", "AI Engineer", "Developer", "Civil Engineer"],
+        "Industry_Interest": ["IT", "AI", "AI", "Software", "Construction"],
+        "Learning_Hours_per_Week": [10, 12, 8, 5, 6],
+        "Learning_Method": ["Online", "Offline", "Online", "Hybrid", "Online"],
+        "Last_Training": ["Python", "ML", "DL", "Java", "AutoCAD"],
+        "Desired Role": ["Backend Developer", "ML Engineer", "AI Developer", "Frontend Dev", "Design Engineer"],
+        "Missing_Skills": ["Cloud", "Deep Learning", "NLP", "Frontend", "Project Management"],
+        "Confidence_Level(1-10)": [8, 7, 9, 6, 5],
+        "Challenges": ["Time management", "Lack of resources", "Practical exposure", "Motivation", "Guidance"],
+        "Need_Recommendations": ["Yes", "Yes", "No", "Yes", "Yes"]
+    }
+    return pd.DataFrame(data)
+
+# Load dataset
+if uploaded_file:
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
-    df = sanitize_df(df)
 elif use_sample:
-    np.random.seed(42)
-    n = 200
-    names = [f"Student {i}" for i in range(1, 51)]
-    depts = ["CSE", "ECE", "MECH", "CIVIL", "EEE", "AIDS", "AIML"]
-    events = ["Symposium", "Paper presentation", "Seminar", "Quiz", "Workshop", "Sports", "Cultural event"]
-    roles = ["Presenter/Speaker", "Organizer/Volunteer", "Coordinator/Leader", "Winner/Acheiver"]
-    years = ["1st Year", "2nd Year", "3rd Year", "4th Year"]
-    skills = ["Coding / Technical", "Creativity and arts", "Soft skills", "Management", "Sports and fitness", "Research and innovation"]
-    data = {
-        "Timestamp": pd.date_range("2023-01-01", periods=n, freq="7D"),
-        "Full Name": np.random.choice(names, size=n),
-        "Roll Number": np.random.randint(1000, 2000, size=n).astype(str),
-        "Department": np.random.choice(depts, size=n),
-        "Year": np.random.choice(years, size=n),
-        "Event": np.random.choice(events, size=n),
-        "Role": np.random.choice(roles, size=n),
-        "Individual_or_Team": np.random.choice(["Individual", "Team"], size=n),
-        "Previous_Participation_Count": np.random.poisson(2, size=n),
-        "Skill domain interested in": np.random.choice(skills, size=n)
-    }
-    df = pd.DataFrame(data)
-    df = sanitize_df(df)
+    df = create_sample_data()
 else:
-    st.warning("📥 Please upload a CSV or tick 'Use sample data'.")
+    st.warning("⚠️ Please upload a dataset or use the sample dataset.")
     st.stop()
 
-st.subheader("📊 Dataset Preview")
-st.write(df.head())
+# Drop Name column if it exists
+if "Name" in df.columns:
+    df = df.drop(columns=["Name"])
 
-# -----------------------
-# Task type
-# -----------------------
-task_type = st.sidebar.selectbox("🧩 Select Task Type", ["Classification", "Regression"])
+with col1:
+    st.header("📊 Dataset Preview")
+    st.dataframe(df.head())
 
-# -----------------------
-# Target and feature selection
-# -----------------------
-target_col = st.sidebar.selectbox("🎯 Select Target Column", df.columns)
-feature_cols = st.sidebar.multiselect(
-    "✨ Select Feature Columns (choose at least 3)", 
-    [c for c in df.columns if c != target_col],
-    default=[c for c in df.columns if c != target_col][:5]
-)
-if len(feature_cols) < 3:
-    st.warning("⚠ Please select at least 3 features.")
-    st.stop()
+st.markdown("---")
 
-X = df[feature_cols].copy()
-y_orig = df[target_col].copy()
+# ---------------------------------
+# 🧠 Model Training Section
+# ---------------------------------
+st.header("🧩 Model Training and Evaluation")
 
-# -----------------------
-# Classification encoding
-# -----------------------
-if task_type == "Classification":
-    le_target = LabelEncoder()
-    y = le_target.fit_transform(y_orig.astype(str))
-else:
-    y = y_orig.copy()
+# Define target and features
+target_col = "Missing_Skills"
+feature_cols = [col for col in df.columns if col != target_col]
 
-# -----------------------
-# Preprocessing
-# -----------------------
+X = df[feature_cols]
+y = df[target_col]
+
+# Encode target
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+
+# Identify numeric and categorical features
 numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
 categorical_features = X.select_dtypes(include=['object']).columns.tolist()
 
-preprocessor = ColumnTransformer(
-    transformers=[
-        ('num', StandardScaler(), numeric_features),
-        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
-    ]
-)
+# Preprocessor
+preprocessor = ColumnTransformer([
+    ("num", StandardScaler(), numeric_features),
+    ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
+])
 
-# -----------------------
-# Model selection
-# -----------------------
-if task_type == "Classification":
-    model_choice = st.sidebar.selectbox("🤖 Choose Classifier", ["SVM", "Logistic Regression", "Random Forest", "Decision Tree"])
-else:
-    model_choice = st.sidebar.selectbox("🤖 Choose Regressor", ["Linear Regression", "SVR", "Random Forest Regressor", "Decision Tree Regressor"])
+# Model
+model = RandomForestClassifier(n_estimators=200, random_state=42)
 
-# -----------------------
-# Define model pipeline
-# -----------------------
-def get_model_pipeline(task, choice):
-    if task == "Classification":
-        if choice == "SVM":
-            return Pipeline([('preprocessor', preprocessor), ('classifier', SVC())])
-        elif choice == "Logistic Regression":
-            return Pipeline([('preprocessor', preprocessor), ('classifier', LogisticRegression(max_iter=1000))])
-        elif choice == "Random Forest":
-            return Pipeline([('preprocessor', preprocessor), ('classifier', RandomForestClassifier(n_estimators=200, random_state=42, class_weight='balanced'))])
-        else:
-            return Pipeline([('preprocessor', preprocessor), ('classifier', DecisionTreeClassifier(random_state=42, class_weight='balanced'))])
-    else:
-        if choice == "Linear Regression":
-            return Pipeline([('preprocessor', preprocessor), ('regressor', LinearRegression())])
-        elif choice == "SVR":
-            return Pipeline([('preprocessor', preprocessor), ('regressor', SVR())])
-        elif choice == "Random Forest Regressor":
-            return Pipeline([('preprocessor', preprocessor), ('regressor', RandomForestRegressor(n_estimators=200, random_state=42))])
-        else:
-            return Pipeline([('preprocessor', preprocessor), ('regressor', DecisionTreeRegressor(random_state=42))])
+# Pipeline
+pipeline = Pipeline([
+    ("preprocessor", preprocessor),
+    ("model", model)
+])
 
-# -----------------------
-# Predefined dropdown lists for prediction input
-# -----------------------
-depts = ["CSE", "ECE", "MECH", "CIVIL", "EEE", "AIDS", "AIML"]
-events = ["Symposium", "Paper presentation", "Seminar", "Quiz", "Workshop", "Sports", "Cultural event"]
-roles = ["Presenter/Speaker", "Organizer/Volunteer", "Coordinator/Leader", "Winner/Acheiver"]
-years = ["1st Year", "2nd Year", "3rd Year", "4th Year"]
-skills = ["Coding / Technical", "Creativity and arts", "Soft skills", "Management", "Sports and fitness", "Research and innovation"]
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.25, random_state=42)
 
-# -----------------------
-# User input for prediction
-# -----------------------
+# Train model
+pipeline.fit(X_train, y_train)
+y_pred = pipeline.predict(X_test)
+
+# Evaluation
+col3, col4 = st.columns(2)
+with col3:
+    st.subheader("📈 Model Accuracy")
+    st.metric("Accuracy", f"{accuracy_score(y_test, y_pred)*100:.2f}%")
+with col4:
+    st.subheader("📋 Classification Report")
+    st.text(classification_report(y_test, y_pred, target_names=le.classes_, zero_division=0))
+
 st.markdown("---")
-st.subheader("📝 Enter Feature Values for Prediction")
-input_data = {}
-for col in feature_cols:
-    if col in numeric_features:
-        val = st.number_input(f"{col}", value=float(df[col].mean()))
-    else:
-        if col.lower() == "department":
-            val = st.selectbox(f"{col}", depts)
-        elif col.lower() == "event":
-            val = st.selectbox(f"{col}", events)
-        elif col.lower() == "role":
-            val = st.selectbox(f"{col}", roles)
-        elif col.lower() == "year":
-            val = st.selectbox(f"{col}", years)
-        elif col.lower() == "skill domain interested in":
-            val = st.selectbox(f"{col}", skills)
-        else:
-            val = st.selectbox(f"{col}", sorted(df[col].dropna().unique()))
-    input_data[col] = val
-input_df = pd.DataFrame([input_data])
 
-# -----------------------
-# Predict button
-# -----------------------
-if st.button("🔮 Predict"):
-    # Train/test split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = get_model_pipeline(task_type, model_choice)
-    model.fit(X_train, y_train)
-    
-    # Predict test set
-    y_pred = model.predict(X_test)
+# ---------------------------------
+# 🔮 Skill Gap Prediction
+# ---------------------------------
+st.header("🔮 Skill Gap Prediction")
 
-    # -----------------------
-    # Display metrics
-    # -----------------------
-    st.subheader("✨ Model Performance")
-    if task_type == "Classification":
-        acc = accuracy_score(y_test, y_pred)
-        st.write(f"🎯 Accuracy: {acc:.2f}")
-        st.text("📑 Classification Report:")
-        test_classes = np.unique(y_test)
-        test_class_names = le_target.inverse_transform(test_classes)
-        st.text(classification_report(y_test, y_pred, zero_division=0, labels=test_classes, target_names=test_class_names))
-    else:
-        mse = mean_squared_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        st.write(f"📏 MSE: {mse:.3f}")
-        st.write(f"📈 R² Score: {r2:.3f}")
+col5, col6 = st.columns(2)
+with col5:
+    year = st.selectbox("Year of Study", sorted(df["Year_of_Study"].unique()))
+    branch = st.selectbox("Degree Branch", sorted(df["Degree_Branch"].unique()))
+    goal = st.selectbox("Career Goal", sorted(df["Career_Goal"].unique()))
+    interest = st.selectbox("Industry Interest", sorted(df["Industry_Interest"].unique()))
+    method = st.selectbox("Learning Method", sorted(df["Learning_Method"].unique()))
+    training = st.selectbox("Last Training", sorted(df["Last_Training"].unique()))
+    desired_role = st.selectbox("Desired Role", sorted(df["Desired Role"].unique()))
 
-    # -----------------------
-    # Predict user input
-    # -----------------------
-    prediction = model.predict(input_df)
-    if task_type == "Classification":
-        pred_label = le_target.inverse_transform(prediction)[0]
-        st.subheader(f"✅ Predicted {target_col}: {pred_label}")
-    else:
-        st.subheader(f"✅ Predicted {target_col}: {prediction[0]:.2f}")
-        st.info("ℹ Regression predictions are numeric values.")
+with col6:
+    py = st.slider("Python Skill (1-5)", 1, 5, 3)
+    java = st.slider("Java Skill (1-5)", 1, 5, 3)
+    cpp = st.slider("C/C++ Skill (1-5)", 1, 5, 3)
+    sql = st.slider("SQL Skill (1-5)", 1, 5, 3)
+    web = st.slider("WebDev Skill (1-5)", 1, 5, 3)
+    comm = st.slider("Communication Skill (1-5)", 1, 5, 3)
+    prob = st.slider("Problem Solving Skill (1-5)", 1, 5, 3)
+    lead = st.slider("Leadership Skill (1-5)", 1, 5, 3)
+    team = st.slider("Teamwork Skill (1-5)", 1, 5, 3)
+    confidence = st.slider("Confidence Level (1-10)", 1, 10, 7)
+    completed_courses = st.number_input("Completed Courses", min_value=0, max_value=20, value=3)
+    learning_hours = st.number_input("Learning Hours per Week", min_value=0, max_value=50, value=8)
+    challenges = st.text_input("Challenges", "Time management")
+    need_reco = st.selectbox("Need Recommendations?", ["Yes", "No"])
 
-    # Balloons only after prediction
-    st.balloons()
+# Build prediction DataFrame
+input_data = pd.DataFrame([{
+    "Year_of_Study": year,
+    "Degree_Branch": branch,
+    "Python_Skill(1-5)": py,
+    "Java_Skill(1-5)": java,
+    "C_C++_Skill(1-5)": cpp,
+    "SQL_Skill(1-5)": sql,
+    "WebDev_Skill(1-5)": web,
+    "Communication_Skill(1-5)": comm,
+    "ProblemSolving_Skill(1-5)": prob,
+    "Leadership_Skill(1-5)": lead,
+    "Teamwork_Skill(1-5)": team,
+    "Completed_Courses": completed_courses,
+    "Career_Goal": goal,
+    "Industry_Interest": interest,
+    "Learning_Hours_per_Week": learning_hours,
+    "Learning_Method": method,
+    "Last_Training": training,
+    "Desired Role": desired_role,
+    "Confidence_Level(1-10)": confidence,
+    "Challenges": challenges,
+    "Need_Recommendations": need_reco
+}])
+
+if st.button("🔍 Analyze Skill Gap"):
+    try:
+        # --- Robust preprocessing for prediction ---
+        for col in numeric_features:
+            input_data[col] = pd.to_numeric(input_data[col], errors='coerce').fillna(0)
+        for col in categorical_features:
+            input_data[col] = input_data[col].astype(str).fillna("Unknown")
+
+        # Reorder columns exactly as training
+        input_data = input_data[X.columns]
+
+        # Predict
+        pred = pipeline.predict(input_data)
+        predicted_skill = le.inverse_transform(pred)[0]
+        st.success(f"🎯 Predicted Missing Skill: **{predicted_skill}**")
+        st.info(f"💡 Suggestion: Focus on improving your *{predicted_skill}* through targeted courses, workshops, or projects.")
+        st.balloons()
+    except Exception as e:
+        st.error(f"⚠️ Prediction failed: {e}")
